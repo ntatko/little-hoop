@@ -30,7 +30,11 @@ export function cropToContent(img: ImageData, pad = 4): ImageData {
   return c.getContext('2d')!.getImageData(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
 }
 
-/** Removes the background with a model that runs in the browser (downloaded once, then cached). */
+/**
+ * Removes the background with a model that runs in the browser (downloaded once, then
+ * cached). Returns the picture at its original size with the background made transparent,
+ * so touch-ups can line up with the original.
+ */
 export async function removeBackground(img: ImageData, onProgress: (fraction: number, label: string) => void): Promise<ImageData> {
   const { removeBackground } = await import('@imgly/background-removal')
   const blob = await removeBackground(await toBlob(img), {
@@ -38,7 +42,29 @@ export async function removeBackground(img: ImageData, onProgress: (fraction: nu
     output: { format: 'image/png' },
     progress: (key, current, total) => onProgress(total ? current / total : 0, key.startsWith('fetch') ? 'Downloading the cutout model (once)' : 'Cutting out'),
   })
-  return cropToContent(await loadImage(blob, Math.max(img.width, img.height)))
+  const cut = await loadImage(blob, Math.max(img.width, img.height))
+  // Keep the original colors; take only the mask from the model's output.
+  const out = new ImageData(new Uint8ClampedArray(img.data), img.width, img.height)
+  for (let i = 3; i < out.data.length; i += 4) out.data[i] = cut.width === img.width ? cut.data[i] : 255
+  return out
+}
+
+/**
+ * Tells photos from flat artwork: clip art spends most of its pixels on a handful of exact
+ * colors, photos spread them over thousands.
+ */
+export function looksLikePhoto(img: ImageData): boolean {
+  const counts = new Map<number, number>()
+  let total = 0
+  for (let i = 0; i < img.data.length; i += 16) { // every 4th pixel is plenty
+    if (img.data[i + 3] < 128) continue
+    const key = ((img.data[i] >> 3) << 10) | ((img.data[i + 1] >> 3) << 5) | (img.data[i + 2] >> 3)
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+    total++
+  }
+  if (!total) return false
+  const top = [...counts.values()].sort((a, b) => b - a).slice(0, 16).reduce((a, b) => a + b, 0)
+  return top / total < 0.7
 }
 
 /** True when the picture already has a cut-out background (a transparent PNG, say). */

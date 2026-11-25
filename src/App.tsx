@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { hex, type RGB } from './lib/color'
 import type { Design, DesignParams } from './lib/design'
 import { writeDST, writePES } from './lib/formats'
-import { cropToContent, hasTransparency, loadImage, removeBackground } from './lib/image'
+import { cropToContent, hasTransparency, loadImage, looksLikePhoto, removeBackground } from './lib/image'
 import { BROTHER, threadById } from './lib/threads'
 import { Preview } from './Preview'
+import { TouchUp } from './TouchUp'
 
 const HOOPS = [
   { id: '4x4', label: '4 × 4 in', w: 100, h: 100 },
@@ -34,7 +35,11 @@ export default function App() {
   const [progress, setProgress] = useState<{ f: number; label: string } | null>(null)
   const [name, setName] = useState('design')
   const [original, setOriginal] = useState<ImageData | null>(null)
-  const [cutout, setCutout] = useState<ImageData | null>(null)
+  /** The original with the background made transparent, same size, for touch-ups. */
+  const [masked, setMasked] = useState<ImageData | null>(null)
+  const cutout = useMemo(() => (masked ? cropToContent(masked) : null), [masked])
+  const [touching, setTouching] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
   const [useCutout, setUseCutout] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -121,15 +126,19 @@ export default function App() {
     setError(null)
     setName(file.name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '-').slice(0, 24) || 'design')
     const img = await loadImage(file)
-    setOriginal(img); setCutout(null); setDesign(null)
+    setOriginal(img); setMasked(null); setDesign(null)
+    // Photos stitch best flattened into a few tones with an outline; artwork as it is.
+    const photo = looksLikePhoto(img)
+    setCartoon(photo); setLines(photo ? 'outline' : 'none'); setColors(photo ? 4 : 5)
+    setNote(photo ? 'Looks like a photo, so it starts with Cartoon style, an outline, and 4 colors.' : null)
     if (hasTransparency(img)) {
       // Already cut out: the model would only nibble at the edges.
-      setCutout(cropToContent(img)); setUseCutout(true); setStage('ready')
+      setMasked(img); setUseCutout(true); setStage('ready')
       return
     }
     setStage('cutting')
     try {
-      setCutout(await removeBackground(img, (f, label) => setProgress({ f, label })))
+      setMasked(await removeBackground(img, (f, label) => setProgress({ f, label })))
       setUseCutout(true)
     } catch (e) {
       setUseCutout(false)
@@ -174,6 +183,10 @@ export default function App() {
                 {cutout && <Thumb img={cutout} label="Cut out" active={useCutout} onClick={() => setUseCutout(true)} checker />}
                 {stage === 'cutting' && <div className="thumb pending"><div className="bar"><i style={{ width: `${Math.round((progress?.f ?? 0) * 100)}%` }} /></div><small>{progress?.label ?? 'Cutting out'}…</small></div>}
               </div>
+              {masked && original && (
+                <button className="link" onClick={() => setTouching(true)}>Touch up the cutout</button>
+              )}
+              {note && <p className="hint">{note}</p>}
               <label className="file">Choose another picture<input type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && open(e.target.files[0])} /></label>
             </section>
 
@@ -283,6 +296,11 @@ export default function App() {
             )}
           </section>
         </main>
+      )}
+      {touching && original && masked && (
+        <TouchUp original={original} masked={masked}
+          onDone={(m) => { setMasked(m); setUseCutout(true); setTouching(false) }}
+          onCancel={() => setTouching(false)} />
       )}
       <footer className="foot">Background removal by <a href="https://github.com/imgly/background-removal-js">IMG.LY</a>, runs on your device (AGPL). Nothing is uploaded.</footer>
     </div>
