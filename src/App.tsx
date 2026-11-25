@@ -334,7 +334,10 @@ export default function App() {
           onDone={(m) => { setMasked(m); setUseCutout(true); setTouching(false) }}
           onCancel={() => setTouching(false)} />
       )}
-      <footer className="foot">Background removal by <a href="https://github.com/imgly/background-removal-js">IMG.LY</a>, runs on your device (AGPL). Nothing is uploaded.</footer>
+      <footer className="foot">
+        Everything runs on your device; nothing is uploaded. Background removal by <a href="https://github.com/imgly/background-removal-js">IMG.LY</a>.
+        {' '}Little Hoop is free software (AGPL-3.0): <a href="https://github.com/ntatko/little-hoop">source code</a>.
+      </footer>
     </div>
   )
 }

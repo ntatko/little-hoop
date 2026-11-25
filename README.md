@@ -14,4 +14,6 @@ Pipeline (`src/lib`):
 
 `npx tsx scripts/smoke.ts <dir>` writes a test PES/DST; check them with `pyembroidery`.
 
-Background removal uses `@imgly/background-removal` (AGPL-3.0), so a hosted copy should link to this source.
+## License
+
+AGPL-3.0 (see `LICENSE.md`), matching the background-removal library it uses (`@imgly/background-removal`). The page footer links here.
