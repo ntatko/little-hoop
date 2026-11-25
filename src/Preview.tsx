@@ -10,13 +10,16 @@ interface Props {
   /** How many ops to draw (for playback); Infinity draws everything. */
   upTo: number
   showJumps: boolean
+  /** Tap on the design: position in mm from its center, and where on screen. */
+  onPick?: (mm: { x: number; y: number }, at: { x: number; y: number }) => void
 }
 
 const shade = ([r, g, b]: RGB, k: number) => `rgb(${Math.round(r * k)},${Math.round(g * k)},${Math.round(b * k)})`
 const lift = ([r, g, b]: RGB, k: number) => `rgb(${Math.round(r + (255 - r) * k)},${Math.round(g + (255 - g) * k)},${Math.round(b + (255 - b) * k)})`
 
-export function Preview({ design, threadRgb, hoop, fabric, upTo, showJumps }: Props) {
+export function Preview({ design, threadRgb, hoop, fabric, upTo, showJumps, onPick }: Props) {
   const ref = useRef<HTMLCanvasElement>(null)
+  const frame = useRef({ cx: 0, cy: 0, scale: 1 })
 
   useEffect(() => {
     const canvas = ref.current
@@ -34,6 +37,7 @@ export function Preview({ design, threadRgb, hoop, fabric, upTo, showJumps }: Pr
     const scale = (size - ring * 2 - 16) / Math.max(hoop.w, hoop.h)
     const fw = hoop.w * scale, fh = hoop.h * scale
     const cx = size / 2, cy = size / 2
+    frame.current = { cx, cy, scale }
     const r = Math.min(fw, fh) * 0.12
     const rr = (x: number, y: number, w: number, h: number, rad: number) => {
       ctx.beginPath(); ctx.roundRect(x, y, w, h, rad)
@@ -98,5 +102,13 @@ export function Preview({ design, threadRgb, hoop, fabric, upTo, showJumps }: Pr
     ctx.restore()
   }, [design, threadRgb, hoop, fabric, upTo, showJumps])
 
-  return <canvas ref={ref} className="preview" aria-label="Stitch preview" />
+  return (
+    <canvas ref={ref} className={`preview ${onPick ? 'pickable' : ''}`} aria-label="Stitch preview"
+      onClick={(e) => {
+        if (!onPick) return
+        const r = e.currentTarget.getBoundingClientRect()
+        const { cx, cy, scale } = frame.current
+        onPick({ x: (e.clientX - r.left - cx) / scale, y: (e.clientY - r.top - cy) / scale }, { x: e.clientX - r.left, y: e.clientY - r.top })
+      }} />
+  )
 }

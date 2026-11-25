@@ -1,4 +1,4 @@
-import { labToRgb, rgbToLab, type Lab } from './color'
+import { deltaE2000, labToRgb, rgbToLab, type Lab } from './color'
 
 /** Seeded so moving an unrelated slider doesn't reshuffle the colors. */
 function rng(seed: number) {
@@ -43,10 +43,13 @@ export function quantize(img: ImageData, k: number, smooth = 0, cartoon = false)
   const d2 = (i: number, c: Lab) => (lab[i * 3] - c[0]) ** 2 + (lab[i * 3 + 1] - c[1]) ** 2 + (lab[i * 3 + 2] - c[2]) ** 2
   const at = (i: number): Lab => [lab[i * 3], lab[i * 3 + 1], lab[i * 3 + 2]]
 
+  // Over-split first: k-means hands colors to whatever covers the most pixels, so a small
+  // but striking feature (a beak, an eye) loses out to two nearly identical body shades.
+  const want = Math.min(k + 4, 16)
   // k-means++ start: spread the first centers out.
-  const centers: Lab[] = [at(sample[Math.floor(rand() * sample.length)])]
+  let centers: Lab[] = [at(sample[Math.floor(rand() * sample.length)])]
   const best = new Float32Array(sample.length).fill(Infinity)
-  while (centers.length < k) {
+  while (centers.length < want) {
     let sum = 0
     sample.forEach((p, s) => { best[s] = Math.min(best[s], d2(p, centers[centers.length - 1])); sum += best[s] })
     if (sum === 0) break
@@ -60,18 +63,38 @@ export function quantize(img: ImageData, k: number, smooth = 0, cartoon = false)
     for (let c = 0; c < centers.length; c++) { const d = d2(i, centers[c]); if (d < bd) { bd = d; bi = c } }
     return bi
   }
-  for (let iter = 0; iter < 14; iter++) {
-    const sums = centers.map(() => [0, 0, 0, 0])
-    for (const p of sample) { const c = assign(p); const s = sums[c]; s[0] += lab[p * 3]; s[1] += lab[p * 3 + 1]; s[2] += lab[p * 3 + 2]; s[3]++ }
-    let moved = 0
-    sums.forEach((s, c) => {
-      if (!s[3]) return
-      const next: Lab = [s[0] / s[3], s[1] / s[3], s[2] / s[3]]
-      moved = Math.max(moved, Math.abs(next[0] - centers[c][0]) + Math.abs(next[1] - centers[c][1]) + Math.abs(next[2] - centers[c][2]))
-      centers[c] = next
-    })
-    if (moved < 0.5) break
+  const refine = (iters: number) => {
+    let sizes: number[] = []
+    for (let iter = 0; iter < iters; iter++) {
+      const sums = centers.map(() => [0, 0, 0, 0])
+      for (const p of sample) { const c = assign(p); const s = sums[c]; s[0] += lab[p * 3]; s[1] += lab[p * 3 + 1]; s[2] += lab[p * 3 + 2]; s[3]++ }
+      let moved = 0
+      sums.forEach((s, c) => {
+        if (!s[3]) return
+        const next: Lab = [s[0] / s[3], s[1] / s[3], s[2] / s[3]]
+        moved = Math.max(moved, Math.abs(next[0] - centers[c][0]) + Math.abs(next[1] - centers[c][1]) + Math.abs(next[2] - centers[c][2]))
+        centers[c] = next
+      })
+      sizes = sums.map((s) => s[3])
+      if (moved < 0.5) break
+    }
+    return sizes
   }
+  let sizes = refine(14)
+  // Drop empty clusters, then merge the two most alike colors until k remain.
+  centers = centers.filter((_, i) => sizes[i] > 0); sizes = sizes.filter((n) => n > 0)
+  while (centers.length > k) {
+    let ba = 0, bb = 1, bd = Infinity
+    for (let a = 0; a < centers.length; a++) for (let b = a + 1; b < centers.length; b++) {
+      const d = deltaE2000(centers[a], centers[b])
+      if (d < bd) { bd = d; ba = a; bb = b }
+    }
+    const na = sizes[ba], nb = sizes[bb]
+    centers[ba] = [0, 1, 2].map((j) => (centers[ba][j] * na + centers[bb][j] * nb) / (na + nb)) as Lab
+    sizes[ba] = na + nb
+    centers.splice(bb, 1); sizes.splice(bb, 1)
+  }
+  refine(3)
   for (const p of fg) labels[p] = assign(p)
   return compact({ labels, palette: centers, width, height })
 }

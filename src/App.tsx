@@ -55,6 +55,9 @@ export default function App() {
   const [skip, setSkip] = useState<number[]>([])
   const [threads, setThreads] = useState<Record<number, number>>({})
   const [picking, setPicking] = useState<number | null>(null)
+  /** Shapes tapped in the preview and given their own thread. */
+  const [recolor, setRecolor] = useState<{ fx: number; fy: number; thread: number }[]>([])
+  const [tapped, setTapped] = useState<{ mm: { x: number; y: number }; at: { x: number; y: number } } | null>(null)
 
   const [fabric, setFabric] = useState(FABRICS[0].color)
   const [design, setDesign] = useState<Design | null>(null)
@@ -67,7 +70,7 @@ export default function App() {
   const source = useCutout && cutout ? cutout : original
 
   // Colors, picture and hoop change what the regions are, so per-color choices start over.
-  useEffect(() => { setSkip([]); setThreads({}) }, [colors, source])
+  useEffect(() => { setSkip([]); setThreads({}); setRecolor([]) }, [colors, source])
 
   const params: DesignParams = useMemo(() => ({
     colors, maxW: hoop.w - 8, maxH: hoop.h - 8, scale,
@@ -75,7 +78,8 @@ export default function App() {
     minArea: 16 * Math.pow(1.5 / 16, (detail - 1) / 9),
     density: DENSITY[density].mm, angle, underlay, lines, cartoon, skip,
     smooth: Math.round((10 - detail) / 3),
-  }), [colors, hoop, scale, detail, density, angle, underlay, lines, cartoon, skip])
+    recolor,
+  }), [colors, hoop, scale, detail, density, angle, underlay, lines, cartoon, skip, recolor])
 
   // Rebuild in the worker whenever anything changes; only the newest result is kept.
   const worker = useRef<Worker | null>(null)
@@ -261,9 +265,37 @@ export default function App() {
 
           <section className="stage">
             <div className="hoopwrap">
-              <Preview design={design} threadRgb={threadRgb} hoop={hoop} fabric={fabric} upTo={upTo} showJumps={showJumps} />
+              <Preview design={design} threadRgb={threadRgb} hoop={hoop} fabric={fabric} upTo={upTo} showJumps={showJumps}
+                onPick={design && !playing ? (mm, at) => setTapped({ mm, at }) : undefined} />
+              {tapped && (
+                <div className="tap" style={{ left: tapped.at.x, top: tapped.at.y }}>
+                  <div className="tap-head"><b>Give this shape its own thread</b><button aria-label="Close" onClick={() => setTapped(null)}>×</button></div>
+                  <div className="picker inline">
+                    {BROTHER.map((b) => (
+                      <button key={b.id} title={`${b.name} (#${b.id})`} style={{ background: hex(b.rgb) }}
+                        onClick={() => {
+                          // Stored as a fraction of the design's size, so it stays on the same shape when resized.
+                          if (design) setRecolor((list) => [...list, { fx: tapped.mm.x / design.width, fy: tapped.mm.y / design.height, thread: b.id }])
+                          setTapped(null)
+                        }} />
+                    ))}
+                  </div>
+                </div>
+              )}
               {(busy || stage === 'cutting') && <div className="working">{stage === 'cutting' ? 'Cutting out the background…' : 'Stitching…'}</div>}
             </div>
+            {recolor.length > 0 && (
+              <div className="picked">
+                <span>Picked out:</span>
+                {recolor.map((r, i) => {
+                  const t = threadById(r.thread)
+                  return <button key={i} className="chip small" onClick={() => setRecolor((l) => l.filter((_, j) => j !== i))} title="Remove">
+                    <span className="dot" style={{ background: hex(t.rgb) }} />{t.name} ×
+                  </button>
+                })}
+              </div>
+            )}
+            <p className="hint center">Tip: tap any shape in the hoop to give it its own thread, like a beak or a nose that blended in.</p>
             <div className="toolbar">
               <button className="play" disabled={!design} onClick={() => { if (playing) setPlaying(false); else { setUpTo(0); setPlaying(true) } }}>{playing ? 'Pause' : 'Sew it out'}</button>
               <div className="fabrics" role="radiogroup" aria-label="Fabric">

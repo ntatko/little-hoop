@@ -1,7 +1,7 @@
-import { labToRgb, luminance, type RGB } from './color'
+import { labToRgb, luminance, rgbToLab, type RGB } from './color'
 import { fill, outline, polyline, run, travel, type Move } from './fill'
 import { cleanUp, quantize } from './quantize'
-import { nearestThread } from './threads'
+import { nearestThread, threadById } from './threads'
 import { shapeArea, traceLabel, type Pt, type Shape } from './trace'
 
 export type OpKind = 'stitch' | 'jump' | 'color' | 'end'
@@ -37,6 +37,9 @@ export interface DesignParams {
   skip: number[]
   /** Blur passes before reducing colors: more means bolder, simpler shapes. */
   smooth: number
+  /** Shapes picked out by hand: the shape under (fx, fy), as fractions of the design's
+   *  width and height from its center, gets its own thread. */
+  recolor?: { fx: number; fy: number; thread: number }[]
 }
 
 export interface Design {
@@ -95,15 +98,36 @@ export function buildSized(data: ImageData, wMm: number, hMm: number, p: DesignP
   const { width: w, height: h } = q
   const toMm = (pt: Pt): Pt => ({ x: pt.x * MM_PER_PX - wMm / 2, y: pt.y * MM_PER_PX - hMm / 2 })
 
+  // Hand-picked shapes: the connected patch under each tap becomes its own color.
+  const fixed = new Map<number, number>() // palette index -> thread id
+  for (const r of p.recolor ?? []) {
+    const x0 = Math.floor((r.fx + 0.5) * w), y0 = Math.floor((r.fy + 0.5) * h)
+    if (x0 < 0 || y0 < 0 || x0 >= w || y0 >= h) continue
+    const from = q.labels[y0 * w + x0]
+    if (from < 0) continue
+    const to = q.palette.length
+    q.palette.push(rgbToLab(...threadById(r.thread).rgb))
+    fixed.set(to, r.thread)
+    const stack = [y0 * w + x0]
+    q.labels[stack[0]] = to
+    while (stack.length) {
+      const i = stack.pop()!, x = i % w, y = (i / w) | 0
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) {
+        if (j >= 0 && q.labels[j] === from) { q.labels[j] = to; stack.push(j) }
+      }
+    }
+  }
+
   // Pixel counts per color, for ordering and the share shown next to each thread.
   const counts = new Array(q.palette.length).fill(0)
   for (const l of q.labels) if (l >= 0) counts[l]++
   const total = counts.reduce((a, b) => a + b, 0) || 1
   // Threads: the biggest areas choose first, each from those not yet taken.
-  const taken = new Set<number>()
-  const colors: ColorInfo[] = q.palette.map((lab) => ({ rgb: labToRgb(...lab), thread: 0, share: 0 }))
+  const taken = new Set<number>(fixed.values())
+  const colors: ColorInfo[] = q.palette.map((lab, i) => ({ rgb: fixed.has(i) ? threadById(fixed.get(i)!).rgb : labToRgb(...lab), thread: fixed.get(i) ?? 0, share: counts[i] / total }))
   const byShare = colors.map((_, i) => i).sort((a, b) => counts[b] - counts[a])
   for (const i of byShare) {
+    if (fixed.has(i)) continue
     const lab = q.palette[i]
     // Photos are muted next to thread: match muted colors as a more saturated version, the
     // way you'd pick a spool to stand for them. Colors that are already strong stay as they are.
@@ -168,6 +192,13 @@ export function buildSized(data: ImageData, wMm: number, hMm: number, p: DesignP
 
   // Biggest areas first, so details land on top of what's around them.
   const palette = colors.map((_, i) => i).filter((i) => !p.skip.includes(i) && counts[i] > 0).sort((a, b) => counts[b] - counts[a])
+  if (p.lines !== 'none' && palette.length > 1) {
+    // The outline goes in the darkest thread; stitch that color last so the outline follows
+    // straight on without loading the same spool twice.
+    const darkest = palette.reduce((bi, i) => (luminance(colors[i].rgb) < luminance(colors[bi].rgb) ? i : bi), palette[0])
+    palette.splice(palette.indexOf(darkest), 1)
+    palette.push(darkest)
+  }
   palette.forEach((ci, n) => {
     if (n > 0) {
       for (const pt of tie(here, ops[ops.length - 2] ?? here)) ops.push({ ...pt, kind: 'stitch' })
