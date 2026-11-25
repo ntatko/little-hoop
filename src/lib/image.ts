@@ -40,3 +40,11 @@ export async function removeBackground(img: ImageData, onProgress: (fraction: nu
   })
   return cropToContent(await loadImage(blob, Math.max(img.width, img.height)))
 }
+
+/** True when the picture already has a cut-out background (a transparent PNG, say). */
+export function hasTransparency(img: ImageData): boolean {
+  const { data } = img
+  let clear = 0
+  for (let i = 3; i < data.length; i += 4) if (data[i] < 128) clear++
+  return clear > (data.length / 4) * 0.02
+}

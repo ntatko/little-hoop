@@ -147,24 +147,29 @@ export function cleanUp(q: Quantized, minArea: number): Quantized {
   return compact({ ...q, labels })
 }
 
-/** Box blur over the visible pixels only, so photo grain doesn't become confetti. */
+/**
+ * Median filter over the visible pixels: removes photo grain but keeps hard edges, so
+ * clip art doesn't grow a halo of in-between colors.
+ */
 function blur(img: ImageData, passes: number): Uint8ClampedArray {
   const { width: w, height: h } = img
   let src = img.data
+  const r: number[] = [], g: number[] = [], b: number[] = []
+  const mid = (a: number[]) => a.sort((x, y) => x - y)[a.length >> 1]
   for (let pass = 0; pass < passes; pass++) {
     const out = new Uint8ClampedArray(src)
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       const i = (y * w + x) * 4
       if (src[i + 3] < 128) continue
-      let r = 0, g = 0, b = 0, n = 0
+      r.length = g.length = b.length = 0
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         const xx = x + dx, yy = y + dy
         if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue
         const j = (yy * w + xx) * 4
         if (src[j + 3] < 128) continue
-        r += src[j]; g += src[j + 1]; b += src[j + 2]; n++
+        r.push(src[j]); g.push(src[j + 1]); b.push(src[j + 2])
       }
-      out[i] = r / n; out[i + 1] = g / n; out[i + 2] = b / n
+      out[i] = mid(r); out[i + 1] = mid(g); out[i + 2] = mid(b)
     }
     src = out
   }

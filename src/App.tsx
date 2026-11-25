@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { hex, type RGB } from './lib/color'
 import type { Design, DesignParams } from './lib/design'
 import { writeDST, writePES } from './lib/formats'
-import { loadImage, removeBackground } from './lib/image'
+import { cropToContent, hasTransparency, loadImage, removeBackground } from './lib/image'
 import { BROTHER, threadById } from './lib/threads'
 import { Preview } from './Preview'
 
@@ -94,7 +94,9 @@ export default function App() {
   }, [source, params])
 
   const threadFor = useCallback((i: number) => threadById(threads[i] ?? design?.colors[i]?.thread ?? 20), [threads, design])
-  const threadRgb: RGB[] = useMemo(() => (design ? design.colors.map((_, i) => threadFor(i).rgb) : []), [design, threadFor])
+  // The preview shows the picture's own colors (what to aim for when choosing spools) unless
+  // a specific thread was picked for a color.
+  const threadRgb: RGB[] = useMemo(() => (design ? design.colors.map((c, i) => (threads[i] ? threadFor(i).rgb : c.rgb)) : []), [design, threads, threadFor])
 
   // Playback: sew the design out in stitch order.
   useEffect(() => {
@@ -119,6 +121,11 @@ export default function App() {
     setName(file.name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '-').slice(0, 24) || 'design')
     const img = await loadImage(file)
     setOriginal(img); setCutout(null); setDesign(null)
+    if (hasTransparency(img)) {
+      // Already cut out: the model would only nibble at the edges.
+      setCutout(cropToContent(img)); setUseCutout(true); setStage('ready')
+      return
+    }
     setStage('cutting')
     try {
       setCutout(await removeBackground(img, (f, label) => setProgress({ f, label })))

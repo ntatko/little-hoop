@@ -48,6 +48,17 @@ function simplify(ring: Pt[], eps: number): Pt[] {
   return [...a.slice(0, -1), ...b.slice(0, -1)]
 }
 
+/** One round of corner cutting: turns pixel stair-steps into smooth curves. */
+function chaikin(ring: Pt[]): Pt[] {
+  if (ring.length < 4) return ring
+  const out: Pt[] = []
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length]
+    out.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25 }, { x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75 })
+  }
+  return out
+}
+
 /**
  * Traces every region of one label into shapes, in pixel units. Edges run around each
  * pixel in a fixed rotation, so shared edges cancel and what's left are the outlines
@@ -103,7 +114,7 @@ export function traceLabel(labels: Int16Array, w: number, h: number, label: numb
         const a = ring[(i - 1 + ring.length) % ring.length], b = ring[(i + 1) % ring.length]
         return (p.x - a.x) * (b.y - p.y) - (p.y - a.y) * (b.x - p.x) !== 0
       })
-      if (tight.length >= 3) rings.push(simplify(tight, eps))
+      if (tight.length >= 3) rings.push(chaikin(simplify(tight, eps)))
     }
   }
 

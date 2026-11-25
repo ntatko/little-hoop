@@ -1,4 +1,4 @@
-import { labToRgb, luminance, type Lab, type RGB } from './color'
+import { labToRgb, luminance, type RGB } from './color'
 import { fill, outline, run, travel, type Move } from './fill'
 import { cleanUp, quantize } from './quantize'
 import { nearestThread } from './threads'
@@ -96,14 +96,21 @@ export function buildSized(data: ImageData, wMm: number, hMm: number, p: DesignP
   const counts = new Array(q.palette.length).fill(0)
   for (const l of q.labels) if (l >= 0) counts[l]++
   const total = counts.reduce((a, b) => a + b, 0) || 1
+  // Threads: the biggest areas choose first, each from those not yet taken.
   const taken = new Set<number>()
-  const colors: ColorInfo[] = q.palette.map((lab: Lab, i) => {
-    // Photos are muted next to thread: match a more saturated version of the color, the way
-    // you'd pick a spool to stand for it.
-    const t = nearestThread([lab[0], lab[1] * 1.7, lab[2] * 1.7], taken)
+  const colors: ColorInfo[] = q.palette.map((lab) => ({ rgb: labToRgb(...lab), thread: 0, share: 0 }))
+  const byShare = colors.map((_, i) => i).sort((a, b) => counts[b] - counts[a])
+  for (const i of byShare) {
+    const lab = q.palette[i]
+    // Photos are muted next to thread: match muted colors as a more saturated version, the
+    // way you'd pick a spool to stand for them. Colors that are already strong stay as they are.
+    const chroma = Math.hypot(lab[1], lab[2])
+    const boost = 1 + 0.6 * Math.max(0, 1 - chroma / 40)
+    const t = nearestThread([lab[0], lab[1] * boost, lab[2] * boost], taken)
     taken.add(t.id)
-    return { rgb: labToRgb(...lab), thread: t.id, share: counts[i] / total }
-  })
+    colors[i].thread = t.id
+    colors[i].share = counts[i] / total
+  }
 
   const ops: Op[] = []
   let here: Pt = { x: 0, y: 0 }

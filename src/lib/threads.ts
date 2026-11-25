@@ -1,4 +1,4 @@
-import { rgbToLab, type Lab, type RGB } from './color'
+import { deltaE2000, rgbToLab, type Lab, type RGB } from './color'
 
 export interface Thread {
   /** Brother's PEC color index, written into the file so the machine names the thread to load. */
@@ -41,9 +41,7 @@ export function nearestThread(lab: Lab, taken: Set<number> = new Set()): Thread 
   let best = BROTHER[0], bestD = Infinity
   BROTHER.forEach((t, i) => {
     if (taken.has(t.id)) return
-    // Lightness counts for less than hue: a golden dog should get a gold thread, not a pale gray.
-    const t2 = labs[i]
-    const d = 0.5 * (lab[0] - t2[0]) ** 2 + 1.4 * ((lab[1] - t2[1]) ** 2 + (lab[2] - t2[2]) ** 2)
+    const d = deltaE2000(lab, labs[i])
     if (d < bestD) { bestD = d; best = t }
   })
   return best

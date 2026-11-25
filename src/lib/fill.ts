@@ -112,6 +112,24 @@ export function run(a: Pt, b: Pt, len: number): Pt[] {
   return Array.from({ length: n }, (_, i) => ({ x: a.x + ((b.x - a.x) * (i + 1)) / n, y: a.y + ((b.y - a.y) * (i + 1)) / n }))
 }
 
+/** Evenly spaced points along a polyline (excluding its start), regardless of its vertices. */
+export function along(path: Pt[], len: number): Pt[] {
+  let total = 0
+  for (let i = 1; i < path.length; i++) total += dist(path[i - 1], path[i])
+  if (total < 1e-6) return []
+  const n = Math.max(1, Math.ceil(total / len)), step = total / n
+  const out: Pt[] = []
+  let seg = 1, segStart = 0, segLen = dist(path[0], path[1] ?? path[0])
+  for (let k = 1; k <= n; k++) {
+    const target = k === n ? total : k * step
+    while (seg < path.length - 1 && segStart + segLen < target) { segStart += segLen; seg++; segLen = dist(path[seg - 1], path[seg]) }
+    const t = segLen ? (target - segStart) / segLen : 1
+    const a = path[seg - 1], b = path[seg]
+    out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })
+  }
+  return out
+}
+
 /**
  * How to get from a to b while staying inside the shape: straight if the line doesn't
  * leave it, otherwise along the nearest edge. Returns null when only a jump will do.
@@ -144,12 +162,7 @@ export function travel(a: Pt, b: Pt, shape: Shape, maxLen: number): Pt[] | null 
       if (len < bestLen) { bestLen = len; best = path }
     }
   }
-  if (best && bestLen <= maxLen && (!straight || bestLen < d * 3)) {
-    const out: Pt[] = []
-    let prev = a
-    for (const p of best) { out.push(...run(prev, p, 2.5)); prev = p }
-    return out
-  }
+  if (best && bestLen <= maxLen && (!straight || bestLen < d * 3)) return along([a, ...best], 2.5)
   if (straight && d <= maxLen) return run(a, b, 2.5)
   return null
 }
@@ -193,14 +206,11 @@ export function outline(ring: Pt[], len: number, bean: boolean, from: Pt): Move[
   ring.forEach((p, i) => { if (dist(p, from) < dist(ring[start], from)) start = i })
   const loop = [...ring.slice(start), ...ring.slice(0, start), ring[start]]
   const moves: Move[] = [{ ...loop[0], jump: true }]
-  let prev = loop[0]
-  for (const p of loop.slice(1)) {
-    for (const q of run(prev, p, len)) {
-      const last = moves[moves.length - 1]
-      if (bean) moves.push({ ...q }, { x: last.x, y: last.y }, { ...q })
-      else moves.push({ ...q })
-    }
-    prev = p
+  let last = loop[0]
+  for (const q of along(loop, len)) {
+    if (bean) moves.push({ ...q }, { ...last }, { ...q })
+    else moves.push({ ...q })
+    last = q
   }
   return moves
 }
