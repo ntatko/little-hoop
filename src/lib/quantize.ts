@@ -1,4 +1,4 @@
-import { rgbToLab, type Lab } from './color'
+import { labToRgb, rgbToLab, type Lab } from './color'
 
 /** Seeded so moving an unrelated slider doesn't reshuffle the colors. */
 function rng(seed: number) {
@@ -22,9 +22,10 @@ export interface Quantized {
  * Reduces the foreground of an image to k colors with k-means in Lab space.
  * Pixels with alpha below half are background.
  */
-export function quantize(img: ImageData, k: number, smooth = 0): Quantized {
+export function quantize(img: ImageData, k: number, smooth = 0, cartoon = false): Quantized {
   const { width, height } = img
-  const data = smooth > 0 ? blur(img, smooth) : img.data
+  let data = cartoon ? flatten(img) : img.data
+  if (smooth > 0) data = blur({ width, height, data } as ImageData, smooth)
   const n = width * height
   const lab = new Float32Array(n * 3)
   const fg: number[] = []
@@ -174,4 +175,50 @@ function blur(img: ImageData, passes: number): Uint8ClampedArray {
     src = out
   }
   return src
+}
+
+/**
+ * Cartoon look: an edge-preserving (bilateral) filter, run a few times, so shading inside an
+ * area melts into one flat tone while edges between areas stay sharp.
+ */
+function flatten(img: ImageData, passes = 6, radius = 3, sigmaColor = 16): Uint8ClampedArray {
+  const { width: w, height: h } = img
+  const n = w * h
+  let lab = new Float32Array(n * 3)
+  const alpha = new Uint8Array(n)
+  for (let i = 0; i < n; i++) {
+    alpha[i] = img.data[i * 4 + 3] >= 128 ? 1 : 0
+    const [L, a, b] = rgbToLab(img.data[i * 4], img.data[i * 4 + 1], img.data[i * 4 + 2])
+    lab[i * 3] = L; lab[i * 3 + 1] = a; lab[i * 3 + 2] = b
+  }
+  const spatial: number[] = []
+  for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) spatial.push(Math.exp(-(dx * dx + dy * dy) / (2 * (radius * 0.75) ** 2)))
+  const inv = 1 / (2 * sigmaColor * sigmaColor)
+  for (let pass = 0; pass < passes; pass++) {
+    const out = new Float32Array(lab)
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      if (!alpha[i]) continue
+      const L0 = lab[i * 3], a0 = lab[i * 3 + 1], b0 = lab[i * 3 + 2]
+      let sw = 0, sL = 0, sa = 0, sb = 0, k = 0
+      for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++, k++) {
+        const xx = x + dx, yy = y + dy
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue
+        const j = yy * w + xx
+        if (!alpha[j]) continue
+        const dL = lab[j * 3] - L0, da = lab[j * 3 + 1] - a0, db = lab[j * 3 + 2] - b0
+        const wt = spatial[k] * Math.exp(-(dL * dL + da * da + db * db) * inv)
+        sw += wt; sL += wt * lab[j * 3]; sa += wt * lab[j * 3 + 1]; sb += wt * lab[j * 3 + 2]
+      }
+      out[i * 3] = sL / sw; out[i * 3 + 1] = sa / sw; out[i * 3 + 2] = sb / sw
+    }
+    lab = out
+  }
+  const data = new Uint8ClampedArray(img.data)
+  for (let i = 0; i < n; i++) {
+    if (!alpha[i]) continue
+    const [r, g, b] = labToRgb(lab[i * 3], lab[i * 3 + 1], lab[i * 3 + 2])
+    data[i * 4] = r; data[i * 4 + 1] = g; data[i * 4 + 2] = b
+  }
+  return data
 }

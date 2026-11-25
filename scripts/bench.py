@@ -32,7 +32,7 @@ for c in cases:
     raw = os.path.join(S, 'tmp.rgba'); open(raw, 'wb').write(small.tobytes())
     out = os.path.join(S, c['file'] + '.pes')
     res = subprocess.run(['npx', 'tsx', 'scripts/run.ts', raw, str(small.width), str(small.height), out,
-                          str(c.get('colors', 6)), str(c.get('detail', 4)), '1' if c.get('outline') else '0'],
+                          str(c.get('colors', 6)), str(c.get('detail', 4)), c.get('lines', 'none'), '1' if c.get('cartoon') else '0'],
                          capture_output=True, text=True)
     if res.returncode: print(res.stderr[-2000:]); continue
     info = json.loads(res.stdout.strip().splitlines()[-1]); print(c['file'], info)
@@ -40,7 +40,7 @@ for c in cases:
     orig.paste(t, ((480 - t.width) // 2, (480 - t.height) // 2), t)
     st = render(out)
     tile = Image.new('RGB', (960, 510), '#ffffff'); tile.paste(orig, (0, 0)); tile.paste(st, (480, 0))
-    ImageDraw.Draw(tile).text((10, 488), f"{c['file']}  colors={c.get('colors',6)} detail={c.get('detail',4)}  stitches={info['stitches']} trims={info['trims']}", fill='#333')
+    ImageDraw.Draw(tile).text((10, 488), f"{c['file']}  colors={c.get('colors',6)} detail={c.get('detail',4)} cartoon={c.get('cartoon',False)} lines={c.get('lines','none')}  stitches={info['stitches']} trims={info['trims']}", fill='#333')
     tiles.append(tile)
 sheet = Image.new('RGB', (960, 510 * len(tiles)), '#fff')
 for i, t in enumerate(tiles): sheet.paste(t, (0, 510 * i))

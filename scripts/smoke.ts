@@ -16,7 +16,7 @@ for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
 }
 const img = { width: W, height: H, data, colorSpace: 'srgb' } as unknown as ImageData
 const t0 = performance.now()
-const d = buildSized(img, W * 0.25, H * 0.25, { colors: 5, maxW: 90, maxH: 90, scale: 1, minArea: 4, density: 0.4, angle: 45, underlay: true, outline: true, skip: [], smooth: 0 })
+const d = buildSized(img, W * 0.25, H * 0.25, { colors: 5, maxW: 90, maxH: 90, scale: 1, minArea: 4, density: 0.4, angle: 45, underlay: true, lines: 'outline', cartoon: false, skip: [], smooth: 0 })
 console.log(`built in ${(performance.now() - t0).toFixed(0)} ms: ${d.stitches} stitches, ${d.jumps} jumps, ${d.order.length} color blocks, ${d.width.toFixed(1)}x${d.height.toFixed(1)} mm`)
 console.log('colors', d.order.map((i) => `${d.colors[i].thread}:${d.colors[i].rgb}`).join('  '))
 const long = d.ops.filter((o, i) => i > 0 && o.kind === 'stitch' && d.ops[i - 1].kind === 'stitch' && Math.hypot(o.x - d.ops[i - 1].x, o.y - d.ops[i - 1].y) > 4)

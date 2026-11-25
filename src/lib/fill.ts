@@ -214,3 +214,15 @@ export function outline(ring: Pt[], len: number, bean: boolean, from: Pt): Move[
   }
   return moves
 }
+
+/** Bean or running stitch along an open line, from its first point. */
+export function polyline(path: Pt[], len: number, bean: boolean): Move[] {
+  const moves: Move[] = [{ ...path[0], jump: true }]
+  let last = path[0]
+  for (const q of along(path, len)) {
+    if (bean) moves.push({ ...q }, { ...last }, { ...q })
+    else moves.push({ ...q })
+    last = q
+  }
+  return moves
+}

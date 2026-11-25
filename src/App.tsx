@@ -45,7 +45,8 @@ export default function App() {
   const [density, setDensity] = useState(1)
   const [angle, setAngle] = useState(45)
   const [underlay, setUnderlay] = useState(true)
-  const [outline, setOutline] = useState(false)
+  const [lines, setLines] = useState<'none' | 'outline' | 'cartoon'>('none')
+  const [cartoon, setCartoon] = useState(false)
   const [skip, setSkip] = useState<number[]>([])
   const [threads, setThreads] = useState<Record<number, number>>({})
   const [picking, setPicking] = useState<number | null>(null)
@@ -67,9 +68,9 @@ export default function App() {
     colors, maxW: hoop.w - 8, maxH: hoop.h - 8, scale,
     // Detail 1..10 → smallest patch 16 mm² (bold) .. 1.5 mm² (fine).
     minArea: 16 * Math.pow(1.5 / 16, (detail - 1) / 9),
-    density: DENSITY[density].mm, angle, underlay, outline, skip,
+    density: DENSITY[density].mm, angle, underlay, lines, cartoon, skip,
     smooth: Math.round((10 - detail) / 3),
-  }), [colors, hoop, scale, detail, density, angle, underlay, outline, skip])
+  }), [colors, hoop, scale, detail, density, angle, underlay, lines, cartoon, skip])
 
   // Rebuild in the worker whenever anything changes; only the newest result is kept.
   const worker = useRef<Worker | null>(null)
@@ -221,13 +222,27 @@ export default function App() {
 
             <section className="card">
               <h2><span>4</span>Stitches</h2>
+              <div className="row"><span>Style</span>
+                <div className="seg small">
+                  <button className={!cartoon ? 'on' : ''} onClick={() => setCartoon(false)}>As is</button>
+                  <button className={cartoon ? 'on' : ''} onClick={() => setCartoon(true)}>Cartoon</button>
+                </div>
+              </div>
+              {cartoon && <p className="hint">Flattens shading into a few clean tones. Best for photos.</p>}
               <Slider label="Detail" value={detail} min={1} max={10} onChange={setDetail} show={detail <= 3 ? 'Bold' : detail >= 8 ? 'Fine' : 'Medium'} />
               <div className="row"><span>Fill</span>
                 <div className="seg small">{DENSITY.map((d, i) => <button key={d.label} className={i === density ? 'on' : ''} onClick={() => setDensity(i)}>{d.label}</button>)}</div>
               </div>
               <Slider label="Stitch direction" value={angle} min={0} max={175} step={5} onChange={setAngle} show={`${angle}°`} />
               <label className="check"><input type="checkbox" checked={underlay} onChange={(e) => setUnderlay(e.target.checked)} /> Underlay <small>(steadies the fabric; leave on)</small></label>
-              <label className="check"><input type="checkbox" checked={outline} onChange={(e) => setOutline(e.target.checked)} /> Bold outline around the subject</label>
+              <div className="row"><span>Lines</span>
+                <div className="seg small">
+                  <button className={lines === 'none' ? 'on' : ''} onClick={() => setLines('none')}>None</button>
+                  <button className={lines === 'outline' ? 'on' : ''} onClick={() => setLines('outline')}>Outline</button>
+                  <button className={lines === 'cartoon' ? 'on' : ''} onClick={() => setLines('cartoon')}>Cartoon</button>
+                </div>
+              </div>
+              {lines !== 'none' && <p className="hint">{lines === 'outline' ? 'A bold dark line around the whole subject.' : 'Dark lines around the subject and between light and dark areas, like a coloring book.'}</p>}
             </section>
           </aside>
 

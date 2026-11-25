@@ -1,5 +1,5 @@
 import { labToRgb, luminance, type RGB } from './color'
-import { fill, outline, run, travel, type Move } from './fill'
+import { fill, outline, polyline, run, travel, type Move } from './fill'
 import { cleanUp, quantize } from './quantize'
 import { nearestThread } from './threads'
 import { shapeArea, traceLabel, type Pt, type Shape } from './trace'
@@ -29,7 +29,10 @@ export interface DesignParams {
   density: number
   angle: number
   underlay: boolean
-  outline: boolean
+  /** Dark lines stitched on top: none, around the subject, or cartoon ink lines too. */
+  lines: 'none' | 'outline' | 'cartoon'
+  /** Flatten shading first (for photos). */
+  cartoon: boolean
   /** Palette indices to leave unstitched. */
   skip: number[]
   /** Blur passes before reducing colors: more means bolder, simpler shapes. */
@@ -88,7 +91,7 @@ export function buildDesign(img: ImageData, p: DesignParams): Design {
 /** Builds from an image already at MM_PER_PX resolution (wMm × hMm). */
 export function buildSized(data: ImageData, wMm: number, hMm: number, p: DesignParams): Design {
   const minPx = Math.max(4, p.minArea / (MM_PER_PX * MM_PER_PX))
-  const q = cleanUp(quantize(data, p.colors, p.smooth), minPx)
+  const q = cleanUp(quantize(data, p.colors, p.smooth, p.cartoon), minPx)
   const { width: w, height: h } = q
   const toMm = (pt: Pt): Pt => ({ x: pt.x * MM_PER_PX - wMm / 2, y: pt.y * MM_PER_PX - hMm / 2 })
 
@@ -188,29 +191,43 @@ export function buildSized(data: ImageData, wMm: number, hMm: number, p: DesignP
     }
   })
 
-  if (p.outline) {
-    // Bold outline around the whole subject in the darkest thread, stitched last.
-    const mask = q.labels.map((l) => (l >= 0 && !p.skip.includes(l) ? 0 : -1)) as Int16Array
-    const rings = traceLabel(mask, w, h, 0, 0.6).flatMap((s) => s).map((r) => r.map(toMm))
-    if (rings.length) {
+  if (p.lines !== 'none') {
+    // Dark lines stitched last, on top: around the subject, or also between areas that
+    // differ a lot in lightness (cartoon ink lines).
+    const paths = lineArt(q.labels, w, h, q.palette.map((lab) => lab[0]), new Set(p.skip), p.lines === 'cartoon')
+      .map((path) => path.map(toMm))
+      .filter((path) => path.reduce((t, pt, i) => t + (i ? dist(path[i - 1], pt) : 0), 0) >= 1.5)
+    if (paths.length) {
       const darkest = colors.reduce((bi, c, i) => (luminance(c.rgb) < luminance(colors[bi].rgb) ? i : bi), 0)
       const thread = luminance(colors[darkest].rgb) < 0.05 ? colors[darkest].thread : 20
       const last = order[order.length - 1]
       if (last !== undefined && colors[last].thread === thread) {
         // Same thread as the last block: keep going, no stop needed.
       } else {
-        colors.push({ rgb: colors[darkest].rgb, thread, share: 0 })
+        colors.push({ rgb: luminance(colors[darkest].rgb) < 0.05 ? colors[darkest].rgb : [20, 20, 20], thread, share: 0 })
         if (ops.length) {
           for (const pt of tie(here, ops[ops.length - 2] ?? here)) ops.push({ ...pt, kind: 'stitch' })
           ops.push({ ...here, kind: 'color' })
         }
         order.push(colors.length - 1)
       }
-      const left = [...rings]
+      coverable = new Set()
+      const left = [...paths]
       while (left.length) {
-        let bi = 0, bd = Infinity
-        left.forEach((r, i) => r.forEach((pt) => { const d = dist(pt, here); if (d < bd) { bd = d; bi = i } }))
-        emit(outline(left.splice(bi, 1)[0], 2, true, here), null)
+        // Nearest end of any remaining line next; lines can be stitched either way.
+        let bi = 0, bd = Infinity, flip = false
+        left.forEach((path, i) => {
+          const closed = dist(path[0], path[path.length - 1]) < 0.01
+          if (closed) path.forEach((pt) => { const d = dist(pt, here); if (d < bd) { bd = d; bi = i; flip = false } })
+          else {
+            const d0 = dist(path[0], here), d1 = dist(path[path.length - 1], here)
+            if (d0 < bd) { bd = d0; bi = i; flip = false }
+            if (d1 < bd) { bd = d1; bi = i; flip = true }
+          }
+        })
+        const path = left.splice(bi, 1)[0]
+        const closed = dist(path[0], path[path.length - 1]) < 0.01
+        emit(closed ? outline(path.slice(0, -1), 1.8, true, here) : polyline(flip ? [...path].reverse() : path, 1.8, true), null)
       }
     }
   }
@@ -225,4 +242,45 @@ export function buildSized(data: ImageData, wMm: number, hMm: number, p: DesignP
     stitches: ops.filter((o) => o.kind === 'stitch').length,
     preview: { labels: q.labels, w, h },
   }
+}
+
+/**
+ * Boundaries worth inking: around the subject, and (for cartoon lines) between neighboring
+ * areas whose lightness differs a lot. Each shared edge is taken once, from its lighter side.
+ */
+function lineArt(labels: Int16Array, w: number, h: number, lightness: number[], skip: Set<number>, inner: boolean): Pt[][] {
+  const at = (x: number, y: number) => {
+    const xi = Math.floor(x), yi = Math.floor(y)
+    if (xi < 0 || yi < 0 || xi >= w || yi >= h) return -1
+    const l = labels[yi * w + xi]
+    return l >= 0 && skip.has(l) ? -1 : l
+  }
+  const paths: Pt[][] = []
+  for (let l = 0; l < lightness.length; l++) {
+    if (skip.has(l)) continue
+    for (const shape of traceLabel(labels, w, h, l, 0.6)) for (const ring of shape) {
+      const keep = ring.map((a, i) => {
+        const b = ring[(i + 1) % ring.length]
+        const len = Math.hypot(b.x - a.x, b.y - a.y) || 1
+        const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2
+        const s1 = at(mx + nx * 0.8, my + ny * 0.8), s2 = at(mx - nx * 0.8, my - ny * 0.8)
+        const other = s1 === l ? s2 : s2 === l ? s1 : s1
+        if (other === l) return false
+        if (other < 0) return true
+        return inner && lightness[l] - lightness[other] >= 22
+      })
+      if (keep.every(Boolean)) { paths.push([...ring, ring[0]]); continue }
+      // Split into runs of kept edges, starting after a dropped one so runs don't wrap.
+      const start = keep.indexOf(false)
+      let run: Pt[] = []
+      for (let k = 1; k <= ring.length; k++) {
+        const i = (start + k) % ring.length
+        if (keep[i]) { if (!run.length) run.push(ring[i]); run.push(ring[(i + 1) % ring.length]) }
+        else if (run.length) { paths.push(run); run = [] }
+      }
+      if (run.length) paths.push(run)
+    }
+  }
+  return paths
 }
